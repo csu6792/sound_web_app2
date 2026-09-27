@@ -1,0 +1,1567 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta
+    name="viewport"
+    content="width=device-width, initial-scale=1, maximum-scale=1"
+  >
+
+  <title>🎙 Breeze-ASR-26</title>
+
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      padding: 24px;
+      background: #111827;
+      color: #f9fafb;
+      font-family:
+        -apple-system,
+        BlinkMacSystemFont,
+        "Segoe UI",
+        "Noto Sans TC",
+        "Microsoft JhengHei",
+        sans-serif;
+    }
+
+    .container {
+      max-width: 900px;
+      margin: 0 auto;
+    }
+
+    h1 {
+      margin: 0 0 6px;
+      font-size: 28px;
+    }
+
+    .subtitle {
+      color: #9ca3af;
+      margin-bottom: 24px;
+    }
+
+    .buttons {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-bottom: 18px;
+    }
+
+    button {
+      border: 0;
+      border-radius: 10px;
+      padding: 12px 18px;
+      font-size: 16px;
+      cursor: pointer;
+      background: #2563eb;
+      color: white;
+    }
+
+    button:hover {
+      background: #1d4ed8;
+    }
+
+    button:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+    }
+
+    #recordBtn {
+      background: #dc2626;
+    }
+
+    #recordBtn:hover:not(:disabled) {
+      background: #b91c1c;
+    }
+
+    #clearBtn {
+      background: #374151;
+    }
+
+    .status {
+      background: #1f2937;
+      border-radius: 10px;
+      padding: 14px 16px;
+      margin-bottom: 14px;
+      line-height: 1.6;
+      white-space: pre-wrap;
+    }
+
+    .progressBox {
+      display: none;
+      background: #1f2937;
+      border-radius: 10px;
+      padding: 16px;
+      margin-bottom: 14px;
+    }
+
+    .progressTitle {
+      margin-bottom: 8px;
+      font-weight: 600;
+    }
+
+    .progressBarOuter {
+      width: 100%;
+      height: 12px;
+      background: #374151;
+      border-radius: 999px;
+      overflow: hidden;
+    }
+
+    .progressBar {
+      width: 0%;
+      height: 100%;
+      background: #22c55e;
+      transition: width 0.15s ease;
+    }
+
+    .progressText {
+      margin-top: 8px;
+      color: #d1d5db;
+      font-size: 14px;
+    }
+
+    textarea {
+      width: 100%;
+      min-height: 240px;
+      resize: vertical;
+      border: 1px solid #374151;
+      border-radius: 10px;
+      background: #0f172a;
+      color: #f9fafb;
+      padding: 16px;
+      font-size: 18px;
+      line-height: 1.7;
+      outline: none;
+    }
+
+    textarea:focus {
+      border-color: #2563eb;
+    }
+
+    details {
+      margin-top: 16px;
+      background: #1f2937;
+      border-radius: 10px;
+      padding: 12px 14px;
+    }
+
+    summary {
+      cursor: pointer;
+      color: #d1d5db;
+    }
+
+    #debug {
+      margin-top: 10px;
+      white-space: pre-wrap;
+      word-break: break-word;
+      color: #9ca3af;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .hint {
+      margin-top: 14px;
+      color: #9ca3af;
+      font-size: 14px;
+      line-height: 1.6;
+    }
+  </style>
+
+  <!-- sherpa-onnx WASM -->
+  <script src="./assets/sherpa-onnx-wasm-web.js"></script>
+</head>
+
+<body>
+
+<div class="container">
+
+  <h1>🎙 Breeze-ASR-26</h1>
+
+  <div class="subtitle">
+    sherpa-onnx · Hugging Face · 瀏覽器本機語音辨識
+  </div>
+
+  <div class="buttons">
+    <button id="loadBtn">
+      ① 載入模型
+    </button>
+
+    <button id="recordBtn" disabled>
+      ② 開始說話
+    </button>
+
+    <button id="clearBtn">
+      清除
+    </button>
+  </div>
+
+  <div id="status" class="status">
+    尚未載入模型
+  </div>
+
+  <div id="progressBox" class="progressBox">
+
+    <div id="progressTitle" class="progressTitle">
+      下載模型
+    </div>
+
+    <div class="progressBarOuter">
+      <div id="progressBar" class="progressBar"></div>
+    </div>
+
+    <div id="progressText" class="progressText">
+      0%
+    </div>
+
+  </div>
+
+  <textarea
+    id="output"
+    placeholder="辨識結果會出現在這裡..."
+  ></textarea>
+
+  <div class="hint">
+    第一次使用需要下載 Breeze-ASR-26 模型。之後瀏覽器可能會使用快取。
+  </div>
+
+  <details>
+    <summary>Debug</summary>
+    <div id="debug"></div>
+  </details>
+
+</div>
+
+
+<script>
+
+/* ============================================================
+   Breeze-ASR-26 ONNX
+   ============================================================ */
+
+const MODEL_BASE_URL =
+  "https://huggingface.co/weemed/Breeze-ASR-26-ONNX/resolve/main/";
+
+const ENCODER_URL =
+  MODEL_BASE_URL +
+  "breeze-asr-26-large-v2-encoder.int8.onnx";
+
+const DECODER_URL =
+  MODEL_BASE_URL +
+  "breeze-asr-26-large-v2-decoder.int8.onnx";
+
+const TOKENS_URL =
+  MODEL_BASE_URL +
+  "breeze-asr-26-large-v2-tokens.txt";
+
+
+/* ============================================================
+   Emscripten Module
+   ============================================================ */
+
+var Module = {
+
+  locateFile: function(path) {
+
+    console.log("locateFile:", path);
+
+    return "./assets/" + path;
+  },
+
+  print: function(text) {
+
+    console.log("[WASM]", text);
+  },
+
+  printErr: function(text) {
+
+    console.error("[WASM]", text);
+  },
+
+  onAbort: function(reason) {
+
+    console.error("WASM ABORT:", reason);
+  }
+};
+
+
+/* ============================================================
+   State
+   ============================================================ */
+
+let wasmModule = null;
+
+let recognizer = null;
+
+let audioContext = null;
+
+let mediaStream = null;
+
+let sourceNode = null;
+
+let processor = null;
+
+let gainNode = null;
+
+let audioStream = null;
+
+let isRecording = false;
+
+
+/* ============================================================
+   DOM
+   ============================================================ */
+
+const loadBtn =
+  document.getElementById("loadBtn");
+
+const recordBtn =
+  document.getElementById("recordBtn");
+
+const clearBtn =
+  document.getElementById("clearBtn");
+
+const statusElement =
+  document.getElementById("status");
+
+const outputElement =
+  document.getElementById("output");
+
+const progressBox =
+  document.getElementById("progressBox");
+
+const progressTitle =
+  document.getElementById("progressTitle");
+
+const progressBar =
+  document.getElementById("progressBar");
+
+const progressText =
+  document.getElementById("progressText");
+
+const debugElement =
+  document.getElementById("debug");
+
+
+/* ============================================================
+   Helpers
+   ============================================================ */
+
+function setStatus(text) {
+
+  statusElement.textContent = text;
+}
+
+
+function debug(text) {
+
+  console.log(text);
+
+  debugElement.textContent +=
+    text + "\n";
+}
+
+
+function setProgress(
+  percent,
+  title
+) {
+
+  progressBox.style.display = "block";
+
+  if (title) {
+    progressTitle.textContent = title;
+  }
+
+  const p =
+    Math.max(
+      0,
+      Math.min(100, percent)
+    );
+
+  progressBar.style.width =
+    p + "%";
+
+  progressText.textContent =
+    Math.round(p) + "%";
+}
+
+
+function hideProgress() {
+
+  progressBox.style.display =
+    "none";
+}
+
+
+/* ============================================================
+   WASM initialization
+   ============================================================ */
+
+async function initializeWasm() {
+
+  if (wasmModule) {
+
+    debug("WASM 已經初始化");
+
+    return wasmModule;
+  }
+
+  setStatus(
+    "正在初始化 sherpa-onnx WASM..."
+  );
+
+  debug(
+    "window.SherpaOnnx = " +
+    typeof window.SherpaOnnx
+  );
+
+  if (
+    typeof window.SherpaOnnx !==
+    "function"
+  ) {
+
+    throw new Error(
+      "找不到 window.SherpaOnnx"
+    );
+  }
+
+  /*
+   * 注意：
+   * 這裡一定要傳入 Module。
+   *
+   * 之前成功的寫法就是：
+   *
+   * await window.SherpaOnnx(Module)
+   */
+
+  wasmModule =
+    await window.SherpaOnnx(Module);
+
+  debug(
+    "WASM 初始化完成"
+  );
+
+  if (
+    !wasmModule.FS ||
+    typeof wasmModule.FS.writeFile !==
+      "function"
+  ) {
+
+    throw new Error(
+      "WASM FS.writeFile 不存在"
+    );
+  }
+
+  debug(
+    "WASM FS.writeFile OK"
+  );
+
+  return wasmModule;
+}
+
+
+/* ============================================================
+   Download file with progress
+   ============================================================ */
+
+async function downloadFile(
+  url,
+  name,
+  progressStart,
+  progressEnd
+) {
+
+  debug(
+    "開始下載：" + name
+  );
+
+  const response =
+    await fetch(url);
+
+  if (!response.ok) {
+
+    throw new Error(
+      "下載失敗 " +
+      response.status +
+      ": " +
+      url
+    );
+  }
+
+  const contentLength =
+    response.headers.get(
+      "content-length"
+    );
+
+  const total =
+    contentLength
+      ? parseInt(contentLength, 10)
+      : 0;
+
+  const reader =
+    response.body.getReader();
+
+  const chunks = [];
+
+  let received = 0;
+
+  while (true) {
+
+    const {
+      done,
+      value
+    } =
+      await reader.read();
+
+    if (done) {
+      break;
+    }
+
+    chunks.push(value);
+
+    received += value.byteLength;
+
+    let localPercent = 0;
+
+    if (total > 0) {
+
+      localPercent =
+        received / total * 100;
+    }
+
+    const percent =
+      progressStart +
+      (
+        localPercent / 100
+      ) *
+      (
+        progressEnd -
+        progressStart
+      );
+
+    setProgress(
+      percent,
+      "下載 " + name
+    );
+
+    if (total > 0) {
+
+      progressText.textContent =
+        Math.round(localPercent) +
+        "% · " +
+        formatBytes(received) +
+        " / " +
+        formatBytes(total);
+    }
+    else {
+
+      progressText.textContent =
+        formatBytes(received);
+    }
+  }
+
+  const data =
+    new Uint8Array(received);
+
+  let offset = 0;
+
+  for (const chunk of chunks) {
+
+    data.set(
+      chunk,
+      offset
+    );
+
+    offset +=
+      chunk.byteLength;
+  }
+
+  debug(
+    "下載完成：" +
+    name +
+    " (" +
+    formatBytes(data.byteLength) +
+    ")"
+  );
+
+  return data;
+}
+
+
+function formatBytes(bytes) {
+
+  if (!bytes) {
+    return "0 B";
+  }
+
+  const units = [
+    "B",
+    "KB",
+    "MB",
+    "GB"
+  ];
+
+  const i =
+    Math.floor(
+      Math.log(bytes) /
+      Math.log(1024)
+    );
+
+  return (
+    bytes /
+    Math.pow(1024, i)
+  ).toFixed(
+    i === 0 ? 0 : 2
+  ) +
+  " " +
+  units[i];
+}
+
+
+/* ============================================================
+   Write files into Emscripten FS
+   ============================================================ */
+
+function writeWasmFile(
+  path,
+  data
+) {
+
+  debug(
+    "寫入 WASM FS：" +
+    path
+  );
+
+  wasmModule.FS.writeFile(
+    path,
+    data
+  );
+}
+
+
+/* ============================================================
+   Load sherpa-onnx ASR API
+   ============================================================ */
+
+async function loadAsrApi() {
+
+  /*
+   * sherpa-onnx-asr.js 內的
+   * OfflineRecognizer 可能是 lexical global，
+   * 不一定會掛到 window。
+   */
+
+  if (
+    typeof OfflineRecognizer ===
+    "function"
+  ) {
+
+    debug(
+      "OfflineRecognizer 已存在"
+    );
+
+    return;
+  }
+
+  debug(
+    "載入 sherpa-onnx-asr.js..."
+  );
+
+  await new Promise(
+    (
+      resolve,
+      reject
+    ) => {
+
+      const script =
+        document.createElement(
+          "script"
+        );
+
+      script.src =
+        "./assets/sherpa-onnx-asr.js";
+
+      script.onload =
+        () => {
+
+          debug(
+            "sherpa-onnx-asr.js 載入完成"
+          );
+
+          resolve();
+        };
+
+      script.onerror =
+        () => {
+
+          reject(
+            new Error(
+              "無法載入 sherpa-onnx-asr.js"
+            )
+          );
+        };
+
+      document.head.appendChild(
+        script
+      );
+    }
+  );
+
+  if (
+    typeof OfflineRecognizer !==
+    "function"
+  ) {
+
+    throw new Error(
+      "找不到 OfflineRecognizer"
+    );
+  }
+
+  debug(
+    "OfflineRecognizer OK"
+  );
+}
+
+
+/* ============================================================
+   Create Breeze recognizer
+   ============================================================ */
+
+function createRecognizer() {
+
+  debug(
+    "建立 Breeze-ASR-26 recognizer..."
+  );
+
+  /*
+   * Breeze-ASR-26 是 Whisper 架構。
+   *
+   * sherpa-onnx 官方的 Whisper 設定：
+   *
+   * modelConfig:
+   *   whisper:
+   *     encoder
+   *     decoder
+   *     language
+   *     task
+   *
+   * tokens 放在 modelConfig.tokens
+   */
+
+  const config = {
+
+    featConfig: {
+
+      sampleRate: 16000,
+
+      featureDim: 80
+    },
+
+    modelConfig: {
+
+      tokens: "./breeze-tokens.txt",
+
+      numThreads: 1,
+
+      provider: "cpu",
+
+      debug: 0,
+
+      whisper: {
+
+        encoder:
+          "./breeze-encoder.int8.onnx",
+
+        decoder:
+          "./breeze-decoder.int8.onnx",
+
+        language: "zh",
+
+        task: "transcribe"
+      }
+    },
+
+    decodingMethod:
+      "greedy_search"
+  };
+
+
+  debug(
+    "Breeze config：\n" +
+    JSON.stringify(
+      config,
+      null,
+      2
+    )
+  );
+
+
+  recognizer =
+    new OfflineRecognizer(
+      config,
+      wasmModule
+    );
+
+
+  debug(
+    "Breeze recognizer 建立完成"
+  );
+}
+
+
+/* ============================================================
+   Load model
+   ============================================================ */
+
+async function loadModel() {
+
+  if (recognizer) {
+
+    setStatus(
+      "模型已經載入，可以開始說話"
+    );
+
+    recordBtn.disabled = false;
+
+    return;
+  }
+
+  loadBtn.disabled = true;
+
+  recordBtn.disabled = true;
+
+  try {
+
+    debug(
+      "=============================="
+    );
+
+    debug(
+      "開始載入 Breeze-ASR-26"
+    );
+
+    debug(
+      "=============================="
+    );
+
+
+    /* --------------------------------------------------------
+       1. WASM
+       -------------------------------------------------------- */
+
+    await initializeWasm();
+
+
+    /* --------------------------------------------------------
+       2. ASR API
+       -------------------------------------------------------- */
+
+    await loadAsrApi();
+
+
+    /* --------------------------------------------------------
+       3. Download encoder
+       -------------------------------------------------------- */
+
+    setProgress(
+      0,
+      "下載 Breeze Encoder"
+    );
+
+    const encoderData =
+      await downloadFile(
+        ENCODER_URL,
+        "Encoder",
+        0,
+        55
+      );
+
+
+    /* --------------------------------------------------------
+       4. Download decoder
+       -------------------------------------------------------- */
+
+    const decoderData =
+      await downloadFile(
+        DECODER_URL,
+        "Decoder",
+        55,
+        95
+      );
+
+
+    /* --------------------------------------------------------
+       5. Download tokens
+       -------------------------------------------------------- */
+
+    const tokensData =
+      await downloadFile(
+        TOKENS_URL,
+        "Tokens",
+        95,
+        100
+      );
+
+
+    /* --------------------------------------------------------
+       6. Write files into Emscripten FS
+       -------------------------------------------------------- */
+
+    setStatus(
+      "正在準備 Breeze-ASR-26..."
+    );
+
+    setProgress(
+      100,
+      "寫入 WASM"
+    );
+
+
+    writeWasmFile(
+      "/breeze-encoder.int8.onnx",
+      encoderData
+    );
+
+
+    writeWasmFile(
+      "/breeze-decoder.int8.onnx",
+      decoderData
+    );
+
+
+    /*
+     * tokens 是文字檔，
+     * 但 Emscripten FS.writeFile 可以直接接受
+     * Uint8Array。
+     */
+
+    writeWasmFile(
+      "/breeze-tokens.txt",
+      tokensData
+    );
+
+
+    debug(
+      "Encoder / Decoder / Tokens 已寫入 WASM FS"
+    );
+
+
+    /* --------------------------------------------------------
+       7. Create recognizer
+       -------------------------------------------------------- */
+
+    createRecognizer();
+
+
+    hideProgress();
+
+
+    setStatus(
+      "✅ Breeze-ASR-26 已載入，可以開始說話"
+    );
+
+
+    recordBtn.disabled =
+      false;
+
+
+    debug(
+      "模型載入完成"
+    );
+
+  }
+  catch (error) {
+
+    console.error(
+      error
+    );
+
+    debug(
+      "模型載入錯誤：\n" +
+      (
+        error &&
+        error.stack
+          ? error.stack
+          : error
+      )
+    );
+
+    setStatus(
+      "❌ 模型載入失敗：\n" +
+      (
+        error &&
+        error.message
+          ? error.message
+          : error
+      )
+    );
+
+    loadBtn.disabled =
+      false;
+
+    recordBtn.disabled =
+      true;
+  }
+}
+
+
+/* ============================================================
+   Start recording
+   ============================================================ */
+
+async function startRecording() {
+
+  if (!recognizer) {
+
+    setStatus(
+      "請先載入模型"
+    );
+
+    return;
+  }
+
+  if (isRecording) {
+    return;
+  }
+
+  try {
+
+    debug(
+      "請求麥克風權限..."
+    );
+
+
+    mediaStream =
+      await navigator.mediaDevices
+        .getUserMedia({
+
+          audio: {
+
+            channelCount: 1,
+
+            echoCancellation: false,
+
+            noiseSuppression: false,
+
+            autoGainControl: false
+          }
+        });
+
+
+    debug(
+      "麥克風權限取得"
+    );
+
+
+    audioContext =
+      new (
+        window.AudioContext ||
+        window.webkitAudioContext
+      )();
+
+
+    debug(
+      "AudioContext sampleRate = " +
+      audioContext.sampleRate
+    );
+
+
+    sourceNode =
+      audioContext.createMediaStreamSource(
+        mediaStream
+      );
+
+
+    /*
+     * 4096 samples
+     *
+     * input  : 1 channel
+     * output : 1 channel
+     */
+
+    processor =
+      audioContext.createScriptProcessor(
+        4096,
+        1,
+        1
+      );
+
+
+    /*
+     * 不把麥克風聲音播放到喇叭，
+     * 避免產生回音。
+     */
+
+    gainNode =
+      audioContext.createGain();
+
+    gainNode.gain.value =
+      0;
+
+
+    /*
+     * 每次錄音建立新的 stream。
+     */
+
+    audioStream =
+      recognizer.createStream();
+
+
+    processor.onaudioprocess =
+      function(event) {
+
+        if (
+          !isRecording ||
+          !audioStream
+        ) {
+
+          return;
+        }
+
+
+        const input =
+          event.inputBuffer
+            .getChannelData(0);
+
+
+        /*
+         * 複製成 Float32Array，
+         * 避免 AudioBuffer 的資料被之後覆寫。
+         */
+
+        const samples =
+          new Float32Array(
+            input.length
+          );
+
+        samples.set(input);
+
+
+        /*
+         * Breeze / Whisper 使用 16 kHz
+         * 特徵。
+         *
+         * sherpa-onnx stream 會根據
+         * sample rate 處理輸入。
+         */
+
+        audioStream.acceptWaveform(
+          audioContext.sampleRate,
+          samples
+        );
+      };
+
+
+    sourceNode.connect(
+      processor
+    );
+
+    processor.connect(
+      gainNode
+    );
+
+    gainNode.connect(
+      audioContext.destination
+    );
+
+
+    isRecording = true;
+
+
+    recordBtn.textContent =
+      "③ 停止並辨識";
+
+    recordBtn.style.background =
+      "#16a34a";
+
+
+    loadBtn.disabled =
+      true;
+
+
+    setStatus(
+      "🔴 正在錄音，請開始說話..."
+    );
+
+
+    debug(
+      "錄音開始"
+    );
+
+  }
+  catch (error) {
+
+    console.error(
+      error
+    );
+
+    debug(
+      "麥克風錯誤：\n" +
+      (
+        error &&
+        error.stack
+          ? error.stack
+          : error
+      )
+    );
+
+    setStatus(
+      "❌ 無法使用麥克風：\n" +
+      (
+        error &&
+        error.message
+          ? error.message
+          : error
+      )
+    );
+
+    cleanupAudio();
+  }
+}
+
+
+/* ============================================================
+   Stop recording
+   ============================================================ */
+
+async function stopRecording() {
+
+  if (!isRecording) {
+    return;
+  }
+
+  isRecording = false;
+
+
+  recordBtn.disabled =
+    true;
+
+  recordBtn.textContent =
+    "辨識中...";
+
+  recordBtn.style.background =
+    "#dc2626";
+
+
+  setStatus(
+    "⏳ 正在辨識..."
+  );
+
+
+  debug(
+    "停止錄音，開始 decode..."
+  );
+
+
+  try {
+
+    /*
+     * 停止音訊輸入。
+     */
+
+    if (processor) {
+
+      processor.onaudioprocess =
+        null;
+    }
+
+
+    /*
+     * OfflineRecognizer decode 前，
+     * 告訴 stream 已經沒有更多 audio。
+     */
+
+    if (
+      audioStream &&
+      typeof audioStream.inputFinished ===
+        "function"
+    ) {
+
+      audioStream.inputFinished();
+
+      debug(
+        "audioStream.inputFinished()"
+      );
+    }
+
+
+    /*
+     * Breeze / Whisper 是 OfflineRecognizer，
+     * 所以這裡一次 decode 完整錄音。
+     */
+
+    recognizer.decode(
+      audioStream
+    );
+
+
+    debug(
+      "decode 完成"
+    );
+
+
+    const result =
+      recognizer.getResult(
+        audioStream
+      );
+
+
+    debug(
+      "辨識結果：\n" +
+      JSON.stringify(
+        result,
+        null,
+        2
+      )
+    );
+
+
+    /*
+     * Breeze 本身直接輸出中文，
+     * 不經過 OpenCC。
+     */
+
+    outputElement.value =
+      result.text || "";
+
+
+    if (
+      result.text &&
+      result.text.trim()
+    ) {
+
+      setStatus(
+        "✅ 辨識完成"
+      );
+
+    }
+    else {
+
+      setStatus(
+        "⚠️ 沒有辨識到文字"
+      );
+    }
+
+  }
+  catch (error) {
+
+    console.error(
+      error
+    );
+
+    debug(
+      "辨識錯誤：\n" +
+      (
+        error &&
+        error.stack
+          ? error.stack
+          : error
+      )
+    );
+
+    setStatus(
+      "❌ 辨識失敗：\n" +
+      (
+        error &&
+        error.message
+          ? error.message
+          : error
+      )
+    );
+
+  }
+  finally {
+
+    cleanupAudio();
+
+    recordBtn.disabled =
+      false;
+
+    recordBtn.textContent =
+      "② 開始說話";
+
+    recordBtn.style.background =
+      "#dc2626";
+  }
+}
+
+
+/* ============================================================
+   Cleanup audio
+   ============================================================ */
+
+function cleanupAudio() {
+
+  debug(
+    "清理音訊資源..."
+  );
+
+
+  if (processor) {
+
+    try {
+      processor.disconnect();
+    }
+    catch (e) {}
+
+    processor =
+      null;
+  }
+
+
+  if (sourceNode) {
+
+    try {
+      sourceNode.disconnect();
+    }
+    catch (e) {}
+
+    sourceNode =
+      null;
+  }
+
+
+  if (gainNode) {
+
+    try {
+      gainNode.disconnect();
+    }
+    catch (e) {}
+
+    gainNode =
+      null;
+  }
+
+
+  if (mediaStream) {
+
+    try {
+
+      mediaStream
+        .getTracks()
+        .forEach(
+          track => track.stop()
+        );
+
+    }
+    catch (e) {}
+
+    mediaStream =
+      null;
+  }
+
+
+  if (audioContext) {
+
+    try {
+
+      audioContext.close();
+
+    }
+    catch (e) {}
+
+    audioContext =
+      null;
+  }
+
+
+  audioStream =
+    null;
+
+
+  debug(
+    "音訊資源清理完成"
+  );
+}
+
+
+/* ============================================================
+   Buttons
+   ============================================================ */
+
+loadBtn.addEventListener(
+  "click",
+  loadModel
+);
+
+
+recordBtn.addEventListener(
+  "click",
+  async function() {
+
+    if (isRecording) {
+
+      await stopRecording();
+
+    }
+    else {
+
+      await startRecording();
+    }
+  }
+);
+
+
+clearBtn.addEventListener(
+  "click",
+  function() {
+
+    outputElement.value = "";
+
+    setStatus(
+      recognizer
+        ? "模型已載入，可以開始說話"
+        : "尚未載入模型"
+    );
+
+    debug(
+      "文字已清除"
+    );
+  }
+);
+
+
+/* ============================================================
+   Startup
+   ============================================================ */
+
+debug(
+  "頁面載入完成"
+);
+
+debug(
+  "Breeze-ASR-26 ONNX"
+);
+
+debug(
+  "Encoder URL: " +
+  ENCODER_URL
+);
+
+debug(
+  "Decoder URL: " +
+  DECODER_URL
+);
+
+debug(
+  "Tokens URL: " +
+  TOKENS_URL
+);
+
+debug(
+  "SherpaOnnx: " +
+  typeof window.SherpaOnnx
+);
+
+setStatus(
+  "尚未載入模型，請按「① 載入模型」"
+);
+
+</script>
+
+</body>
+</html>
