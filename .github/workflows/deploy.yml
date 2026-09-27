@@ -1,0 +1,263 @@
+name: Build Breeze-ASR-26 Web
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    steps:
+      # ------------------------------------------------------------
+      # 1. Checkout website
+      # ------------------------------------------------------------
+      - name: Checkout website
+        uses: actions/checkout@v4
+
+      # ------------------------------------------------------------
+      # 2. Checkout official sherpa-onnx
+      # ------------------------------------------------------------
+      - name: Checkout sherpa-onnx
+        uses: actions/checkout@v4
+        with:
+          repository: k2-fsa/sherpa-onnx
+          path: sherpa-onnx
+
+      # ------------------------------------------------------------
+      # 3. Install Emscripten 4.0.23
+      # ------------------------------------------------------------
+      - name: Install Emscripten
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          git clone \
+            --depth 1 \
+            --branch 4.0.23 \
+            https://github.com/emscripten-core/emsdk.git
+
+          cd emsdk
+
+          ./emsdk install 4.0.23
+          ./emsdk activate 4.0.23
+
+      # ------------------------------------------------------------
+      # 4. Verify official sherpa-onnx already exports FS
+      # ------------------------------------------------------------
+      - name: Verify official FS configuration
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          echo "===== wasm-common.cmake ====="
+
+          grep -n \
+            "FORCE_FILESYSTEM" \
+            sherpa-onnx/wasm/wasm-common.cmake
+
+          grep -n \
+            "EXPORTED_RUNTIME_METHODS" \
+            sherpa-onnx/wasm/wasm-common.cmake
+
+          echo
+          echo "===== wasm/web/CMakeLists.txt ====="
+
+          cat sherpa-onnx/wasm/web/CMakeLists.txt
+
+          echo
+          echo "===== build-wasm-simd-web.sh ====="
+
+          sed -n '1,240p' sherpa-onnx/build-wasm-simd-web.sh
+
+      # ------------------------------------------------------------
+      # 5. Build official WebAssembly
+      #
+      # IMPORTANT:
+      # 不再 patch CMake
+      # 不再使用 CFLAGS/CXXFLAGS
+      #
+      # 官方 wasm-common.cmake 已經包含 FS export。
+      # ------------------------------------------------------------
+      - name: Build sherpa-onnx WebAssembly
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          source emsdk/emsdk_env.sh
+
+          echo "===== Emscripten version ====="
+          emcc --version
+
+          echo
+          echo "===== Building sherpa-onnx WebAssembly ====="
+
+          cd sherpa-onnx
+
+          ./build-wasm-simd-web.sh
+
+      # ------------------------------------------------------------
+      # 6. Verify generated files
+      # ------------------------------------------------------------
+      - name: Verify generated WebAssembly
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          JS_FILE="sherpa-onnx/build-wasm-simd-web/install/bin/wasm/web/sherpa-onnx-wasm-web.js"
+          WASM_FILE="sherpa-onnx/build-wasm-simd-web/install/bin/wasm/web/sherpa-onnx-wasm-web.wasm"
+
+          echo "===== Generated files ====="
+
+          test -f "$JS_FILE"
+          test -f "$WASM_FILE"
+
+          ls -lh "$JS_FILE"
+          ls -lh "$WASM_FILE"
+
+          echo
+          echo "===== Searching for FS ====="
+
+          if grep -q "FS" "$JS_FILE"; then
+            echo "OK: FS symbol detected in generated JS."
+          else
+            echo "ERROR: FS symbol was NOT found."
+            exit 1
+          fi
+
+          echo
+          echo "===== Searching for FORCE_FILESYSTEM ====="
+
+          grep -o "FORCE_FILESYSTEM" "$JS_FILE" | head -5 || true
+
+          echo
+          echo "===== Searching for runtime FS methods ====="
+
+          grep -o "EXPORTED_RUNTIME_METHODS" "$JS_FILE" | head -5 || true
+
+      # ------------------------------------------------------------
+      # 7. Prepare public directory
+      # ------------------------------------------------------------
+      - name: Prepare public directory
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          rm -rf public
+          mkdir -p public/assets
+
+      # ------------------------------------------------------------
+      # 8. Copy WebAssembly runtime
+      # ------------------------------------------------------------
+      - name: Copy WebAssembly runtime
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          cp \
+            sherpa-onnx/build-wasm-simd-web/install/bin/wasm/web/sherpa-onnx-wasm-web.js \
+            public/assets/sherpa-onnx-wasm-web.js
+
+          cp \
+            sherpa-onnx/build-wasm-simd-web/install/bin/wasm/web/sherpa-onnx-wasm-web.wasm \
+            public/assets/sherpa-onnx-wasm-web.wasm
+
+          cp \
+            sherpa-onnx/wasm/asr/sherpa-onnx-asr.js \
+            public/assets/sherpa-onnx-asr.js
+
+          echo "===== public/assets ====="
+          ls -lh public/assets/
+
+      # ------------------------------------------------------------
+      # 9. Final FS check on the actual Pages artifact
+      # ------------------------------------------------------------
+      - name: Final FS export check
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          JS_FILE="public/assets/sherpa-onnx-wasm-web.js"
+
+          echo "Checking:"
+          echo "$JS_FILE"
+
+          test -f "$JS_FILE"
+
+          if grep -q "FS" "$JS_FILE"; then
+            echo "OK: FS exists in final deployed JS."
+          else
+            echo "ERROR: FS does not exist in final deployed JS."
+            exit 1
+          fi
+
+          echo
+          echo "===== Final files ====="
+
+          ls -lh public/assets/
+
+      # ------------------------------------------------------------
+      # 10. Copy website
+      # ------------------------------------------------------------
+      - name: Copy website
+        shell: bash
+        run: |
+          set -euxo pipefail
+
+          cp index.html public/index.html
+
+          if [ -f sw.js ]; then
+            cp sw.js public/sw.js
+          fi
+
+          touch public/.nojekyll
+
+          echo "===== Final public directory ====="
+
+          find public -maxdepth 2 -type f -print
+
+          echo
+          echo "===== Final asset sizes ====="
+
+          ls -lh public/assets/
+
+      # ------------------------------------------------------------
+      # 11. Configure GitHub Pages
+      # ------------------------------------------------------------
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+
+      # ------------------------------------------------------------
+      # 12. Upload Pages artifact
+      # ------------------------------------------------------------
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: public
+
+  # ================================================================
+  # Deploy
+  # ================================================================
+  deploy:
+    needs: build
+    runs-on: ubuntu-22.04
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4
